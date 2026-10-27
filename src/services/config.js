@@ -7,7 +7,6 @@ export function obtenerUrlBaseApi() {
     const envUrl = process.env.EXPO_PUBLIC_API_URL;
     if (envUrl) {
         let url = envUrl.replace(/\/+$/, "");
-        // En Android, localhost no funciona, usar 10.0.2.2
         if (Platform.OS === "android" && url.includes("localhost")) {
             url = url.replace("localhost", "10.0.2.2");
         }
