@@ -1,25 +1,43 @@
-import { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, Modal, TextInput, ScrollView, FlatList } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Platform, RefreshControl, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { router } from 'expo-router';
+import { getUser, logout } from '@/services/auth.service';
 import { obtenerServicios, crearServicio, actualizarServicio, eliminarServicio } from '@/services/servicios.service';
-import { login, getUser, logout } from '@/services/auth.service';
 import { obtenerReservasCliente, crearReserva, cancelarReserva, completarReserva } from '@/services/reservas.service';
+import { programarRecordatorioReserva, cancelarRecordatorioReserva } from '@/services/notificaciones.service';
+import { colors, maxWidth, radii, spacing } from '@/design/tokens';
+import { textStyles } from '@/design/textStyles';
+import { Pantalla } from '@/design/Pantalla';
+import { BotonPrimario, BotonSecundario, BotonPeligro } from '@/design/Botones';
+import { Aviso } from '@/design/Aviso';
+import { EstadoVacio } from '@/design/EstadoVacio';
+import { TarjetaServicio } from '@/design/TarjetaServicio';
+import { TarjetaReserva } from '@/design/TarjetaReserva';
+import { EstadoPill } from '@/design/EstadoPill';
+import { HojaInferior } from '@/design/HojaInferior';
+import { formatearHora } from '@/utils/formato';
+
+type Pestana = 'servicios' | 'reservas' | 'perfil';
+
+const PESTANAS: Pestana[] = ['servicios', 'reservas', 'perfil'];
 
 export default function IndexScreen() {
   const [servicios, setServicios] = useState<any[]>([]);
   const [reservas, setReservas] = useState<any[]>([]);
-  const [cargando, setCargando] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [esAdmin, setEsAdmin] = useState(false);
   const [user, setUser] = useState<any>(null);
-  const [pestaña, setPestaña] = useState<'servicios' | 'reservas'>('servicios');
+  const [esAdmin, setEsAdmin] = useState(false);
+  const [cargando, setCargando] = useState(true);
+  const [refrescando, setRefrescando] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pestana, setPestana] = useState<Pestana>('servicios');
 
   const [modalReservaVisible, setModalReservaVisible] = useState(false);
   const [servicioSeleccionado, setServicioSeleccionado] = useState<any>(null);
   const [fecha, setFecha] = useState<Date | null>(null);
-  const [hora, setHora] = useState('');
+  const [hora, setHora] = useState<Date | null>(null);
   const [mostrarDatePicker, setMostrarDatePicker] = useState(false);
+  const [mostrarTimePicker, setMostrarTimePicker] = useState(false);
   const [guardandoReserva, setGuardandoReserva] = useState(false);
 
   const [modalServicioVisible, setModalServicioVisible] = useState(false);
@@ -30,59 +48,74 @@ export default function IndexScreen() {
   const [precio, setPrecio] = useState('');
   const [guardandoServicio, setGuardandoServicio] = useState(false);
 
+  const cargarDatos = useCallback(async () => {
+    const [listaServicios, listaReservas] = await Promise.all([
+      obtenerServicios(),
+      obtenerReservasCliente(),
+    ]);
+    setServicios(listaServicios);
+    setReservas(listaReservas);
+  }, []);
+
   useEffect(() => {
-    let mounted = true;
+    let montado = true;
     (async () => {
-      const u = await getUser();
-      if (!u) {
+      const usuario = await getUser();
+      if (!usuario) {
         router.replace('/login');
         return;
       }
-      setUser(u);
-      setEsAdmin(u.rol === 'admin');
-      if (mounted) {
-        setCargando(true);
-        try {
-          const lista = await obtenerServicios();
-          if (mounted) setServicios(lista);
-
-          const listaReservas = await obtenerReservasCliente();
-          if (mounted) setReservas(listaReservas);
-        } catch (e: unknown) {
-          if (mounted) {
-            const err = e as { name?: string; message?: string };
-            setError(err.name === 'ApiError' ? (err.message ?? 'Error al cargar') : 'Error al cargar');
-          }
-        } finally {
-          if (mounted) setCargando(false);
-        }
+      if (!montado) return;
+      setUser(usuario);
+      setEsAdmin(usuario.rol === 'admin');
+      try {
+        await cargarDatos();
+        setError(null);
+      } catch (fallo) {
+        setError('No pudimos cargar los datos.');
+      } finally {
+        if (montado) setCargando(false);
       }
     })();
-    return () => { mounted = false; };
-  }, []);
+    return () => { montado = false; };
+  }, [cargarDatos]);
 
-  const handleLoginAdmin = async () => {
+  const refrescar = async () => {
+    setRefrescando(true);
     try {
-      await login({ email: 'admin@test.com', password: '123456' });
-      const u = await getUser();
-      setUser(u);
-      setEsAdmin(u?.rol === 'admin');
-      setPestaña('servicios');
-      Alert.alert('Éxito', 'Sesión de administrador iniciada');
-    } catch (e: unknown) {
-      const err = e as { message?: string };
-      Alert.alert('Error', err.message ?? 'Error inesperado');
+      await cargarDatos();
+      setError(null);
+    } catch (fallo) {
+      setError('No pudimos actualizar los datos.');
+    } finally {
+      setRefrescando(false);
     }
   };
 
-  const handleLogout = async () => {
-    await logout();
-    router.replace('/login');
+  const reintentar = async () => {
+    setCargando(true);
+    try {
+      await cargarDatos();
+      setError(null);
+    } catch (fallo) {
+      setError('No pudimos cargar los datos.');
+    } finally {
+      setCargando(false);
+    }
   };
 
-  const cargarServicios = async () => {
-    const lista = await obtenerServicios();
-    setServicios(lista);
+  const confirmarSalida = () => {
+    Alert.alert('Cerrar sesión', '¿Querés salir de tu cuenta?', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Salir',
+        style: 'destructive',
+        onPress: async () => {
+          await logout();
+          router.replace('/login');
+        },
+      },
+    ]);
   };
 
   const abrirCrearServicio = () => {
@@ -91,10 +124,12 @@ export default function IndexScreen() {
     setModalServicioVisible(true);
   };
 
-  const abrirEditarServicio = (s: any) => {
-    setEditandoServicio(s);
-    setNombre(s.nombre); setDescripcion(s.descripcion);
-    setDuracion(String(s.duracion)); setPrecio(String(s.precio));
+  const abrirEditarServicio = (servicio: any) => {
+    setEditandoServicio(servicio);
+    setNombre(servicio.nombre ?? '');
+    setDescripcion(servicio.descripcion ?? '');
+    setDuracion(String(servicio.duracion ?? ''));
+    setPrecio(String(servicio.precio ?? ''));
     setModalServicioVisible(true);
   };
 
@@ -105,48 +140,60 @@ export default function IndexScreen() {
   };
 
   const handleGuardarServicio = async () => {
-    if (!nombre.trim() || !descripcion.trim() || !duracion || !precio) {
-      Alert.alert('Error', 'Completar todos los campos');
+    const duracionNumero = Number(duracion);
+    const precioNumero = Number(precio);
+
+    if (!nombre.trim() || !descripcion.trim() || !duracion.trim() || !precio.trim()) {
+      Alert.alert('Faltan datos', 'Completá todos los campos para guardar el servicio.');
       return;
     }
-    const d = Number(duracion);
-    const p = Number(precio);
-    if (isNaN(d) || isNaN(p) || d <= 0 || p <= 0) {
-      Alert.alert('Error', 'Duración y precio deben ser números positivos');
+    if (!Number.isFinite(duracionNumero) || duracionNumero <= 0 || !Number.isFinite(precioNumero) || precioNumero <= 0) {
+      Alert.alert('Revisá los números', 'La duración y el precio tienen que ser mayores a cero.');
       return;
     }
+
     setGuardandoServicio(true);
     try {
+      const datos = {
+        nombre: nombre.trim(),
+        descripcion: descripcion.trim(),
+        duracion: duracionNumero,
+        precio: precioNumero,
+      };
+
       if (editandoServicio) {
-        await actualizarServicio(editandoServicio.id, { nombre, descripcion, duracion: d, precio: p });
-        Alert.alert('Éxito', 'Servicio actualizado');
+        await actualizarServicio(editandoServicio.id, datos);
       } else {
-        await crearServicio({ nombre, descripcion, duracion: d, precio: p });
-        Alert.alert('Éxito', 'Servicio creado');
+        await crearServicio(datos);
       }
+
       cerrarServicio();
       await cargarServicios();
-    } catch (e: unknown) {
-      const err = e as { name?: string; message?: string };
-      Alert.alert('Error', err.name === 'ApiError' ? (err.message ?? 'No se pudo guardar') : 'Error al guardar');
+      Alert.alert(editandoServicio ? 'Servicio actualizado' : 'Servicio creado');
+    } catch (fallo) {
+      Alert.alert('No pudimos guardar el servicio', 'Probá de nuevo en un momento.');
     } finally {
       setGuardandoServicio(false);
     }
   };
 
-  const handleEliminarServicio = async (id: number) => {
-    Alert.alert('Confirmar', '¿Eliminar este servicio?', [
-      { text: 'No', style: 'cancel' },
+  const cargarServicios = async () => {
+    setServicios(await obtenerServicios());
+  };
+
+  const handleEliminarServicio = (id: number) => {
+    Alert.alert('Eliminar servicio', 'Esta acción no se puede deshacer.', [
+      { text: 'Cancelar', style: 'cancel' },
       {
-        text: 'Sí, eliminar', style: 'destructive',
+        text: 'Eliminar',
+        style: 'destructive',
         onPress: async () => {
           try {
             await eliminarServicio(id);
             await cargarServicios();
-            Alert.alert('Éxito', 'Servicio eliminado');
-          } catch (e: unknown) {
-            const err = e as { name?: string; message?: string };
-            Alert.alert('Error', err.name === 'ApiError' ? (err.message ?? 'No se pudo eliminar') : 'Error al eliminar');
+            Alert.alert('Servicio eliminado');
+          } catch (fallo) {
+            Alert.alert('No pudimos eliminar el servicio', 'Puede que tenga reservas asociadas.');
           }
         },
       },
@@ -154,45 +201,41 @@ export default function IndexScreen() {
   };
 
   const recargarReservas = async () => {
-    try {
-      const lista = await obtenerReservasCliente();
-      setReservas(lista);
-    } catch {
-    }
+    setReservas(await obtenerReservasCliente());
   };
 
-  const handleCancelarReserva = async (id: number) => {
-    Alert.alert('Confirmar', '¿Cancelar esta reserva?', [
-      { text: 'No', style: 'cancel' },
+  const handleCancelarReserva = (id: number) => {
+    Alert.alert('Cancelar reserva', '¿Querés cancelar esta reserva?', [
+      { text: 'Volver', style: 'cancel' },
       {
-        text: 'Sí, cancelar', style: 'destructive',
+        text: 'Cancelar reserva',
+        style: 'destructive',
         onPress: async () => {
           try {
             await cancelarReserva(id);
+            await cancelarRecordatorioReserva(id);
             await recargarReservas();
-            Alert.alert('Éxito', 'Reserva cancelada');
-          } catch (e: unknown) {
-            const err = e as { name?: string; message?: string };
-            Alert.alert('Error', err.name === 'ApiError' ? (err.message ?? 'No se pudo cancelar') : 'Error al cancelar');
+            Alert.alert('Reserva cancelada');
+          } catch (fallo) {
+            Alert.alert('No pudimos cancelar la reserva', 'Probá de nuevo en un momento.');
           }
         },
       },
     ]);
   };
 
-  const handleCompletarReserva = async (id: number) => {
-    Alert.alert('Confirmar', '¿Marcar esta reserva como completada?', [
-      { text: 'No', style: 'cancel' },
+  const handleCompletarReserva = (id: number) => {
+    Alert.alert('Completar reserva', '¿Marcar esta reserva como completada?', [
+      { text: 'Volver', style: 'cancel' },
       {
-        text: 'Sí, completar', style: 'destructive',
+        text: 'Completar',
         onPress: async () => {
           try {
             await completarReserva(id);
             await recargarReservas();
-            Alert.alert('Éxito', 'Reserva completada');
-          } catch (e: unknown) {
-            const err = e as { name?: string; message?: string };
-            Alert.alert('Error', err.name === 'ApiError' ? (err.message ?? 'No se pudo completar') : 'Error al completar');
+            Alert.alert('Reserva completada');
+          } catch (fallo) {
+            Alert.alert('No pudimos completar la reserva', 'Probá de nuevo en un momento.');
           }
         },
       },
@@ -200,10 +243,12 @@ export default function IndexScreen() {
   };
 
   const abrirReserva = (servicio: any) => {
+    const ahora = new Date();
     setServicioSeleccionado(servicio);
-    setFecha(null);
-    setHora('');
+    setFecha(new Date());
+    setHora(ahora);
     setMostrarDatePicker(false);
+    setMostrarTimePicker(false);
     setModalReservaVisible(true);
   };
 
@@ -211,335 +256,372 @@ export default function IndexScreen() {
     setModalReservaVisible(false);
     setServicioSeleccionado(null);
     setFecha(null);
-    setHora('');
+    setHora(null);
     setMostrarDatePicker(false);
+    setMostrarTimePicker(false);
   };
 
-  const handleDateChange = (event: any, selectedDate?: Date | null) => {
-    const currentDate = selectedDate || fecha;
-    setFecha(currentDate);
-    setMostrarDatePicker(false);
+  const handleDateChange = (_evento: any, seleccionada?: Date | null) => {
+    if (Platform.OS === 'android') setMostrarDatePicker(false);
+    if (seleccionada) setFecha(seleccionada);
+  };
+
+  const handleTimeChange = (_evento: any, seleccionada?: Date | null) => {
+    if (Platform.OS === 'android') setMostrarTimePicker(false);
+    if (seleccionada) setHora(seleccionada);
   };
 
   const handleReservar = async () => {
     if (!servicioSeleccionado || !fecha || !hora) {
-      Alert.alert('Error', 'Seleccioná fecha y hora');
+      Alert.alert('Faltan datos', 'Elegí una fecha y una hora para la reserva.');
       return;
     }
-    const fechaStr = fecha.toISOString().split('T')[0];
+
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    if (fecha <= hoy) {
+      Alert.alert('Fecha inválida', 'Elegí una fecha futura.');
+      return;
+    }
+
     setGuardandoReserva(true);
     try {
-      await crearReserva(servicioSeleccionado.id, fechaStr, hora);
+      const fechaStr = fecha.toISOString().split('T')[0];
+      const horaStr = formatearHora(hora);
+      const reservaCreada = await crearReserva(servicioSeleccionado.id, fechaStr, horaStr);
+      await programarRecordatorioReserva({
+        reservaId: reservaCreada.id,
+        servicioNombre: servicioSeleccionado.nombre,
+        fechaStr,
+        horaStr,
+      });
       cerrarReserva();
-      Alert.alert('Éxito', 'Reserva creada (estado: pendiente)');
+      setPestana('reservas');
       await recargarReservas();
-    } catch (e: unknown) {
-      const err = e as { name?: string; message?: string };
-      Alert.alert('Error', err.name === 'ApiError' ? (err.message ?? 'No se pudo crear la reserva') : 'Error al crear');
+      Alert.alert('Reserva creada', 'Quedó pendiente de confirmación.');
+    } catch (fallo: any) {
+      Alert.alert('No pudimos crear la reserva', fallo.message ?? 'Probá de nuevo en un momento.');
     } finally {
       setGuardandoReserva(false);
     }
   };
 
-  const fechaMostrar = fecha ? fecha.toLocaleDateString() : 'Seleccionar fecha';
-
-  const colorEstado = (estado: string) => {
-    if (estado === 'pendiente') return '#2563eb';
-    if (estado === 'completada') return '#16a34a';
-    if (estado === 'cancelada') return '#dc2626';
-    return '#6b7280';
-  };
-
-  if (cargando && !user) {
+  if (cargando) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 12 }}>Cargando...</Text>
-      </View>
+      <Pantalla>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md }}>
+          <ActivityIndicator color={colors.brand} size="large" />
+          <Text style={textStyles.bodySmall}>Cargando…</Text>
+        </View>
+      </Pantalla>
     );
   }
 
+  const nombreUsuario = typeof user?.nombre === 'string' ? user.nombre.split(' ')[0] : '';
+  const titulo = pestana === 'servicios' ? 'Servicios' : pestana === 'reservas' ? 'Mis reservas' : 'Perfil';
+  const mensajePestana =
+    pestana === 'servicios'
+      ? 'Elegí un servicio y reservá el horario que te quede bien.'
+      : pestana === 'reservas'
+        ? 'Tus reservas y el estado de cada una.'
+        : 'Bienvenido a tu perfil';
+
+  const reservasOrdenadas = [...reservas].sort((a, b) => a.fecha.localeCompare(b.fecha));
+
+  const fechaMostrar = fecha ? fecha.toLocaleDateString() : 'Seleccionar fecha';
+  const horaMostrar = hora ? formatearHora(hora) : 'Seleccionar hora';
+
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1, backgroundColor: '#fff' }}
-      keyboardVerticalOffset={90}
-    >
-      <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40, alignItems: 'center' }} keyboardShouldPersistTaps="handled">
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, width: '100%' }}>
-          <Text style={{ fontSize: 24, fontWeight: '700', color: '#111827' }}>Servicios</Text>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {esAdmin && (
-              <TouchableOpacity onPress={() => router.push('/reservas-admin' as any)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: '#2563eb' }}>
-                <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 14 }}>Todas las Reservas</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity onPress={handleLogout} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: '#dc2626' }}>
-              <Text style={{ color: '#dc2626', fontWeight: '600', fontSize: 14 }}>Cerrar sesión</Text>
+    <Pantalla>
+      {/* Navbar */}
+      <View style={{ backgroundColor: colors.brand, paddingHorizontal: spacing.lg, paddingTop: spacing.lg, paddingBottom: spacing.md }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+          <View style={{ width: 26, height: 26, borderRadius: radii.md, backgroundColor: colors.brandSoft, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: colors.brand, fontWeight: '700', fontSize: 14 }}>{user?.nombre?.charAt(0) ?? 'S'}</Text>
+          </View>
+          <View style={{ marginLeft: spacing.sm }}>
+            <Text style={[textStyles.tab, { color: colors.ink, fontWeight: '700' }]}>Hola, {nombreUsuario || 'de nuevo'}</Text>
+            {esAdmin ? (
+              <View style={{ marginTop: 2, alignSelf: 'flex-start' }}>
+                <Text style={{ fontSize: 10, lineHeight: 14, fontWeight: '700', color: colors.brand, backgroundColor: colors.brandSoft, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 4 }}>Administrador</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        <View style={{ marginTop: spacing.md, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text style={[textStyles.h1, { marginTop: 2 }]}>{titulo}</Text>
+          <BotonSecundario tono="muted" onPress={confirmarSalida}>Salir</BotonSecundario>
+        </View>
+        <Text style={[textStyles.bodySmall, { marginTop: spacing.sm, maxWidth: 330 }]}>{mensajePestana}</Text>
+      </View>
+
+      {/* Pestañas */}
+      <View
+        style={{
+          flexDirection: 'row',
+          backgroundColor: colors.track,
+          borderRadius: 14,
+          padding: 4,
+          marginHorizontal: spacing.lg,
+          marginTop: spacing.md,
+        }}
+      >
+        {PESTANAS.map((valor) => {
+          const activa = pestana === valor;
+          return (
+            <TouchableOpacity
+              key={valor}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: activa }}
+              activeOpacity={0.8}
+              onPress={() => setPestana(valor)}
+              style={{
+                flex: 1,
+                height: 38,
+                borderRadius: 10,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: activa ? colors.surface : 'transparent',
+              }}
+            >
+              <Text style={[textStyles.tab, { color: activa ? colors.ink : colors.muted }]}>
+                {valor === 'servicios' ? 'Servicios' : valor === 'reservas' ? 'Mis reservas' : 'Perfil'}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: spacing.lg + 4, paddingTop: spacing.lg, paddingBottom: spacing.xxxl }}
+        refreshControl={<RefreshControl refreshing={refrescando} onRefresh={refrescar} tintColor={colors.brand} colors={[colors.brand]} />}
+      >
+        <View style={{ width: '100%', maxWidth, alignSelf: 'center' }}>
+          {esAdmin ? (
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+              {pestana === 'servicios' ? (
+                <View style={{ flex: 1 }}>
+                  <BotonPrimario compacto onPress={abrirCrearServicio}>Nuevo servicio</BotonPrimario>
+                </View>
+              ) : null}
+              <View style={{ flex: 1 }}>
+                <BotonSecundario tono="muted" compacto onPress={() => router.push('/reservas-admin')}>Todas las reservas</BotonSecundario>
+              </View>
+            </View>
+          ) : null}
+
+          {error ? (
+            <View style={{ marginTop: spacing.lg }}>
+              <Aviso>{error}</Aviso>
+              <BotonSecundario tono="muted" onPress={reintentar} style={{ alignSelf: 'flex-start' }}>Reintentar</BotonSecundario>
+            </View>
+          ) : null}
+
+          {pestana === 'servicios' ? (
+            <View style={{ marginTop: spacing.lg }}>
+              {servicios.length === 0 ? (
+                <EstadoVacio
+                  titulo="Todavía no hay servicios"
+                  descripcion={esAdmin ? 'Creá el primero con el botón Nuevo servicio.' : 'Cuando el negocio agregue servicios, van a aparecer acá.'}
+                />
+              ) : (
+                servicios.map((servicio) => (
+                  <TarjetaServicio
+                    key={String(servicio.id)}
+                    servicio={servicio}
+                    acciones={
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+                        {esAdmin ? (
+                          <>
+                            <BotonSecundario tono="muted" compacto onPress={() => abrirEditarServicio(servicio)}>Editar</BotonSecundario>
+                            <BotonPeligro tono="peligro" compacto onPress={() => handleEliminarServicio(servicio.id)}>Eliminar</BotonPeligro>
+                          </>
+                        ) : null}
+                        <BotonPrimario compacto onPress={() => abrirReserva(servicio)} style={{ marginLeft: 2 }}>Reservar</BotonPrimario>
+                      </View>
+                    }
+                  />
+                ))
+              )}
+            </View>
+          ) : pestana === 'reservas' ? (
+            <View style={{ marginTop: spacing.lg }}>
+              {reservasOrdenadas.length === 0 ? (
+                <EstadoVacio
+                  titulo="Todavía no tenés reservas"
+                  descripcion="Elegí un servicio y reservá tu primer turno."
+                />
+              ) : (
+                reservasOrdenadas.map((reserva) => (
+                  <TarjetaReserva
+                    key={String(reserva.id)}
+                    reserva={reserva}
+                    acciones={
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+                        {reserva.estado === 'pendiente' ? (
+                          <>
+                            {esAdmin ? (
+                              <BotonSecundario tono="marca" compacto onPress={() => handleCompletarReserva(reserva.id)}>Completar</BotonSecundario>
+                            ) : null}
+                            <BotonPeligro tono="peligro" compacto onPress={() => handleCancelarReserva(reserva.id)}>Cancelar</BotonPeligro>
+                          </>
+                        ) : null}
+                      </View>
+                    }
+                  />
+                ))
+              )}
+            </View>
+          ) : (
+            <View style={{ marginTop: spacing.lg, alignItems: 'center' }}>
+              <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: colors.brandSoft, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.lg }}>
+                <Text style={{ color: colors.brand, fontWeight: '700', fontSize: 32 }}>{user?.nombre?.charAt(0) ?? '?'}</Text>
+              </View>
+              <Text style={[textStyles.serviceName, { textAlign: 'center' }]}>{user?.nombre ?? 'Usuario'}</Text>
+              <Text style={[textStyles.bodySmall, { color: colors.muted, textAlign: 'center', marginTop: spacing.xs }]}>{user?.email ?? ''}</Text>
+              <View style={{ marginTop: spacing.lg }}>
+                <BotonPrimario onPress={confirmarSalida}>Cerrar sesión</BotonPrimario>
+              </View>
+            </View>
+          )}
+        </View>
+      </ScrollView>
+
+      {/* Hoja inferior: servicio (crear/editar) */}
+      <HojaInferior
+        visible={modalServicioVisible}
+        onCerrar={cerrarServicio}
+      >
+        <View style={{ marginBottom: spacing.lg }}>
+          <Text style={[textStyles.label, { marginBottom: spacing.sm }]}>{editandoServicio ? 'Editar servicio' : 'Nuevo servicio'}</Text>
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <Text style={[textStyles.label, { marginBottom: spacing.xs }]}>Nombre</Text>
+              <TextInput
+                style={{ height: 48, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: spacing.sm, backgroundColor: colors.surface, color: colors.ink }}
+                value={nombre}
+                onChangeText={setNombre}
+                placeholder="Nombre del servicio"
+                autoCapitalize="words"
+              />
+            </View>
+          </View>
+          <View style={{ marginTop: spacing.lg }}>
+            <Text style={[textStyles.label, { marginBottom: spacing.xs }]}>Descripción</Text>
+            <TextInput
+              style={{ height: 88, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: spacing.sm, paddingTop: spacing.sm, backgroundColor: colors.surface, color: colors.ink }}
+              value={descripcion}
+              onChangeText={setDescripcion}
+              placeholder="Descripción"
+              multiline
+            />
+          </View>
+          <View style={{ marginTop: spacing.lg, flexDirection: 'row', gap: spacing.sm }}>
+            <View style={{ flex: 1 }}>
+              <Text style={[textStyles.label, { marginBottom: spacing.xs }]}>Duración (min)</Text>
+              <TextInput
+                style={{ height: 48, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: spacing.sm, backgroundColor: colors.surface, color: colors.ink }}
+                value={duracion}
+                onChangeText={setDuracion}
+                placeholder="30"
+                keyboardType="numeric"
+              />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={[textStyles.label, { marginBottom: spacing.xs }]}>Precio</Text>
+              <TextInput
+                style={{ height: 48, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: spacing.sm, backgroundColor: colors.surface, color: colors.ink }}
+                value={precio}
+                onChangeText={setPrecio}
+                placeholder="50000"
+                keyboardType="numeric"
+              />
+            </View>
+          </View>
+          <View style={{ marginTop: spacing.xl, flexDirection: 'row', gap: spacing.sm }}>
+            <TouchableOpacity
+              onPress={cerrarServicio}
+              style={{ flex: 1, height: 50, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Text style={[textStyles.button, { color: colors.muted }]}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleGuardarServicio}
+              disabled={guardandoServicio}
+              style={{ flex: 1, height: 50, backgroundColor: colors.brand, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center', opacity: guardandoServicio ? 0.6 : 1 }}
+            >
+              <Text style={[textStyles.button, { color: colors.white }]}>{guardandoServicio ? 'Guardando…' : editandoServicio ? 'Guardar' : 'Crear'}</Text>
             </TouchableOpacity>
           </View>
         </View>
+      </HojaInferior>
 
-        {error && (
-          <View style={{ backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', padding: 12, borderRadius: 8, marginBottom: 24, alignItems: 'center', width: '100%' }}>
-            <Text style={{ color: '#dc2626', textAlign: 'center' }}>{error}</Text>
-          </View>
-        )}
-
-        <View style={{ flexDirection: 'row', marginBottom: 24, borderBottomWidth: 1, borderBottomColor: '#eee', width: '100%' }}>
-          <TouchableOpacity
-            onPress={() => setPestaña('servicios')}
-            style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 3, borderBottomColor: pestaña === 'servicios' ? '#2563eb' : 'transparent' }}
-          >
-            <Text style={{ fontWeight: '600', color: pestaña === 'servicios' ? '#2563eb' : '#6b7280', fontSize: 16 }}>Servicios</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setPestaña('reservas')}
-            style={{ flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: 3, borderBottomColor: pestaña === 'reservas' ? '#2563eb' : 'transparent' }}
-          >
-            <Text style={{ fontWeight: '600', color: pestaña === 'reservas' ? '#2563eb' : '#6b7280', fontSize: 16 }}>Mis Reservas</Text>
-          </TouchableOpacity>
-        </View>
-
-        {pestaña === 'servicios' && (
-          <>
-            {esAdmin && (
-              <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center', marginBottom: 24 }}>
-                <TouchableOpacity onPress={abrirCrearServicio} style={{ backgroundColor: '#2563eb', paddingVertical: 14, borderRadius: 8, alignItems: 'center' }}>
-                  <Text style={{ color: '#fff', fontWeight: '600', fontSize: 16 }}>Crear Servicio</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {servicios.length === 0 ? (
-              <View style={{ padding: 48, alignItems: 'center' }}>
-                <Text style={{ fontSize: 16, color: '#6b7280', marginBottom: 4 }}>No hay servicios todavía</Text>
-                {esAdmin && <Text style={{ fontSize: 13, color: '#9ca3af' }}>Presiona Crear Servicio para agregar uno</Text>}
-              </View>
-            ) : (
-              servicios.map((s) => (
-                <View
-                  key={String(s.id)}
-                  style={{
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: 14,
-                    backgroundColor: '#fafafa',
-                    borderRadius: 8,
-                    borderWidth: 1,
-                    borderColor: '#eee',
-                    marginBottom: 14,
-                    width: '100%',
-                    maxWidth: 420,
-                    alignSelf: 'center',
-                  }}
-                >
-                  <View style={{ flex: 1, marginRight: 12 }}>
-                    <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 2, color: '#111827' }}>{s.nombre}</Text>
-                    <Text style={{ fontSize: 13, color: '#6b7280' }}>{'$' + s.precio + ' ' + s.duracion + ' min'}</Text>
-                    <Text style={{ fontSize: 13, color: '#6b7280' }}>{s.descripcion}</Text>
-                  </View>
-                  <View style={{ flexDirection: 'row', gap: 6 }}>
-                    <TouchableOpacity onPress={() => abrirReserva(s)} style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 6, backgroundColor: '#2563eb' }}>
-                      <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Reservar</Text>
-                    </TouchableOpacity>
-                    {esAdmin && (
-                      <>
-                        <TouchableOpacity onPress={() => abrirEditarServicio(s)} style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 4, backgroundColor: '#e0e0e0' }}>
-                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#333' }}>Editar</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => handleEliminarServicio(s.id)} style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 4, backgroundColor: '#fee2e2' }}>
-                          <Text style={{ fontSize: 12, fontWeight: '600', color: '#333' }}>Borrar</Text>
-                        </TouchableOpacity>
-                      </>
-                    )}
-                  </View>
-                </View>
-              ))
-            )}
-          </>
-        )}
-
-        {pestaña === 'reservas' && (
-          <>
-            {reservas.length === 0 ? (
-              <View style={{ padding: 48, alignItems: 'center' }}>
-                <Text style={{ fontSize: 16, color: '#6b7280' }}>No tenés reservas todavía</Text>
-              </View>
-            ) : (
-              reservas.map((item) => (
-                <View
-                  key={String(item.id)}
-                  style={{ backgroundColor: '#fafafa', borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 14, marginBottom: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', width: '100%', maxWidth: 420, alignSelf: 'center' }}
-                >
-                  <View>
-                    <Text style={{ fontSize: 15, fontWeight: '600', color: '#111827' }}>{item.servicio?.nombre ?? 'Servicio'}</Text>
-                    <Text style={{ fontSize: 13, color: '#6b7280' }}>{item.fecha ? new Date(item.fecha).toLocaleDateString() : '-'} - {item.hora}</Text>
-                    <Text style={{ fontSize: 13, color: '#6b7280', marginTop: 2 }}>Usuario ID: {item.usuarioId}</Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={{ fontSize: 12, fontWeight: '600', color: colorEstado(item.estado), textTransform: 'uppercase', marginBottom: 6 }}>{item.estado}</Text>
-                    {item.estado === 'pendiente' && (
-                      <>
-                        {esAdmin ? (
-                          <TouchableOpacity onPress={() => handleCompletarReserva(item.id)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 4, backgroundColor: '#16a34a' }}>
-                            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 12 }}>Completar</Text>
-                          </TouchableOpacity>
-                        ) : (
-                          <TouchableOpacity onPress={() => handleCancelarReserva(item.id)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: '#fee2e2' }}>
-                            <Text style={{ color: '#dc2626', fontWeight: '600', fontSize: 12 }}>Cancelar</Text>
-                          </TouchableOpacity>
-                        )}
-                      </>
-                    )}
-                  </View>
-                </View>
-              ))
-            )}
-          </>
-        )}
-
-      </ScrollView>
-
-      {esAdmin && (
-        <Modal
-          visible={modalServicioVisible}
-          animationType="slide"
-          transparent={true}
-          onRequestClose={cerrarServicio}
-        >
-          <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 16 }} onPress={cerrarServicio} activeOpacity={1}>
-            <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, maxHeight: '85%', width: '90%' }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <Text style={{ fontSize: 18, fontWeight: '700', color: '#111827' }}>{editandoServicio ? 'Editar Servicio' : 'Nuevo Servicio'}</Text>
-                <TouchableOpacity onPress={cerrarServicio}>
-                  <Text style={{ fontSize: 22, color: '#9ca3af', padding: 4 }}>x</Text>
-                </TouchableOpacity>
-              </View>
-
-              <View style={{ marginBottom: 14 }}>
-                <Text style={{ fontSize: 13, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Nombre</Text>
-                <TextInput
-                  style={{ height: 44, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 6, paddingHorizontal: 12, fontSize: 15, backgroundColor: '#fff', color: '#111827' }}
-                  value={nombre}
-                  onChangeText={setNombre}
-                  placeholder="Nombre del servicio"
-                  autoCapitalize="words"
-                />
-              </View>
-
-              <View style={{ marginBottom: 14 }}>
-                <Text style={{ fontSize: 13, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Descripción</Text>
-                <TextInput
-                  style={{ height: 44, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 6, paddingHorizontal: 12, fontSize: 15, backgroundColor: '#fff', color: '#111827' }}
-                  value={descripcion}
-                  onChangeText={setDescripcion}
-                  placeholder="Descripción"
-                  multiline
-                  textAlignVertical="top"
-                />
-              </View>
-
-              <View style={{ flexDirection: 'row', gap: 12 }}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Duración (min)</Text>
-                  <TextInput
-                    style={{ height: 44, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 6, paddingHorizontal: 12, fontSize: 15, backgroundColor: '#fff', color: '#111827' }}
-                    value={duracion}
-                    onChangeText={setDuracion}
-                    placeholder="30"
-                    keyboardType="numeric"
-                  />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 13, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Precio</Text>
-                  <TextInput
-                    style={{ height: 44, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 6, paddingHorizontal: 12, fontSize: 15, backgroundColor: '#fff', color: '#111827' }}
-                    value={precio}
-                    onChangeText={setPrecio}
-                    placeholder="50000"
-                    keyboardType="numeric"
-                  />
-                </View>
-              </View>
-
-              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
-                <TouchableOpacity onPress={cerrarServicio} style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 6, backgroundColor: '#e5e7eb' }}>
-                  <Text style={{ color: '#374151', fontWeight: '600', fontSize: 14 }}>Cancelar</Text>
-                </TouchableOpacity>
-                <TouchableOpacity onPress={handleGuardarServicio} style={{ backgroundColor: '#2563eb', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 6, opacity: guardandoServicio ? 0.6 : 1 }} disabled={guardandoServicio}>
-                  {guardandoServicio ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{editandoServicio ? 'Guardar' : 'Crear'}</Text>}
-                </TouchableOpacity>
-              </View>
-            </View>
-          </TouchableOpacity>
-        </Modal>
-      )}
-
-      <Modal
+      {/* Hoja inferior: reserva */}
+      <HojaInferior
         visible={modalReservaVisible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={cerrarReserva}
+        onCerrar={cerrarReserva}
       >
-        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 16 }} onPress={cerrarReserva} activeOpacity={1}>
-          <View style={{ backgroundColor: '#fff', borderRadius: 16, padding: 20, maxHeight: '85%', width: '90%' }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={{ fontSize: 18, fontWeight: '700', color: '#111827' }}>Reservar Servicio</Text>
-              <TouchableOpacity onPress={cerrarReserva}>
-                <Text style={{ fontSize: 22, color: '#9ca3af', padding: 4 }}>x</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={{ marginBottom: 14 }}>
-              <Text style={{ fontSize: 13, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Servicio</Text>
-              <View style={{ borderWidth: 1, borderColor: '#d1d5db', borderRadius: 6, paddingHorizontal: 12, height: 44, justifyContent: 'center', backgroundColor: '#fff' }}>
-                <Text style={{ color: '#111827', fontSize: 15 }}>{servicioSeleccionado?.nombre ?? ''}</Text>
-              </View>
-            </View>
-
-            <View style={{ marginBottom: 14 }}>
-              <Text style={{ fontSize: 13, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Fecha</Text>
-              <TouchableOpacity
-                onPress={() => setMostrarDatePicker(true)}
-                style={{ borderWidth: 1, borderColor: '#d1d5db', borderRadius: 6, paddingHorizontal: 12, height: 44, justifyContent: 'center', backgroundColor: '#fff' }}
-              >
-                <Text style={{ color: '#111827', fontSize: 15 }}>{fechaMostrar}</Text>
-              </TouchableOpacity>
-              {mostrarDatePicker && (
-                <DateTimePicker
-                  value={fecha || new Date()}
-                  mode="date"
-                  display="default"
-                  onChange={handleDateChange}
-                  style={{ width: '100%', marginTop: 8 }}
-                />
-              )}
-            </View>
-
-            <View style={{ marginBottom: 14 }}>
-              <Text style={{ fontSize: 13, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Hora (HH:MM)</Text>
-              <TextInput
-                style={{ height: 44, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 6, paddingHorizontal: 12, fontSize: 15, backgroundColor: '#fff', color: '#111827' }}
-                value={hora}
-                onChangeText={setHora}
-                placeholder="10:00"
-                keyboardType="default"
-              />
-            </View>
-
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 8 }}>
-              <TouchableOpacity onPress={cerrarReserva} style={{ paddingHorizontal: 16, paddingVertical: 10, borderRadius: 6, backgroundColor: '#e5e7eb' }}>
-                <Text style={{ color: '#374151', fontWeight: '600', fontSize: 14 }}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleReservar} style={{ backgroundColor: '#2563eb', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 6, opacity: guardandoReserva ? 0.6 : 1 }} disabled={guardandoReserva}>
-                {guardandoReserva ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>Reservar</Text>}
-              </TouchableOpacity>
+        <View style={{ marginBottom: spacing.lg }}>
+          <Text style={[textStyles.label, { marginBottom: spacing.sm }]}>Reservar servicio</Text>
+          <View style={{ marginBottom: spacing.lg }}>
+            <Text style={[textStyles.label, { marginBottom: spacing.xs }]}>Servicio</Text>
+            <View style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: spacing.sm, height: 48, justifyContent: 'center', backgroundColor: colors.surface }}>
+              <Text style={{ color: colors.ink, fontSize: 15 }}>{servicioSeleccionado?.nombre ?? ''}</Text>
             </View>
           </View>
-        </TouchableOpacity>
-      </Modal>
-    </KeyboardAvoidingView>
+          <View style={{ marginBottom: spacing.lg }}>
+            <Text style={[textStyles.label, { marginBottom: spacing.xs }]}>Fecha</Text>
+            <TouchableOpacity
+              onPress={() => setMostrarDatePicker(true)}
+              style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: spacing.sm, height: 48, justifyContent: 'center', backgroundColor: colors.surface }}
+            >
+              <Text style={{ color: colors.ink, fontSize: 15 }}>{fechaMostrar}</Text>
+            </TouchableOpacity>
+            {mostrarDatePicker && (
+              <DateTimePicker
+                value={fecha || new Date()}
+                mode="date"
+                display="default"
+                onChange={handleDateChange}
+                style={{ width: '100%', marginTop: spacing.sm }}
+              />
+            )}
+          </View>
+          <View>
+            <Text style={[textStyles.label, { marginBottom: spacing.xs }]}>Hora</Text>
+            <TouchableOpacity
+              onPress={() => setMostrarTimePicker(true)}
+              style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, paddingHorizontal: spacing.sm, height: 48, justifyContent: 'center', backgroundColor: colors.surface }}
+            >
+              <Text style={{ color: colors.ink, fontSize: 15 }}>{horaMostrar}</Text>
+            </TouchableOpacity>
+            {mostrarTimePicker && (
+              <DateTimePicker
+                value={hora || new Date()}
+                mode="time"
+                display="default"
+                onChange={handleTimeChange}
+                style={{ width: '100%', marginTop: spacing.sm }}
+              />
+            )}
+          </View>
+          <View style={{ marginTop: spacing.xl, flexDirection: 'row', gap: spacing.sm }}>
+            <TouchableOpacity
+              onPress={cerrarReserva}
+              style={{ flex: 1, height: 50, borderWidth: 1, borderColor: colors.border, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Text style={[textStyles.button, { color: colors.muted }]}>Cancelar</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={handleReservar}
+              disabled={guardandoReserva || !fecha || !hora}
+              style={{ flex: 1, height: 50, backgroundColor: colors.brand, borderRadius: radii.md, alignItems: 'center', justifyContent: 'center', opacity: guardandoReserva || !fecha || !hora ? 0.6 : 1 }}
+            >
+              <Text style={[textStyles.button, { color: colors.white }]}>{guardandoReserva ? 'Reservando…' : 'Reservar'}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </HojaInferior>
+    </Pantalla>
   );
 }

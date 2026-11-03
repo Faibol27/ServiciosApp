@@ -1,7 +1,14 @@
 import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform, Alert, ActivityIndicator } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { registrar } from '@/services/auth.service';  
+import { registrar } from '@/services/auth.service';
+import { colors, spacing } from '@/design/tokens';
+import { textStyles } from '@/design/textStyles';
+import { Pantalla } from '@/design/Pantalla';
+import { Marca } from '@/design/Marca';
+import { CampoFormulario } from '@/design/CampoFormulario';
+import { Boton, BotonTexto } from '@/design/Botones';
+import { Aviso } from '@/design/Aviso';
 
 export default function RegistroScreen() {
   const [nombre, setNombre] = useState('');
@@ -12,84 +19,117 @@ export default function RegistroScreen() {
 
   const handleRegistro = async () => {
     setError('');
-    if (!nombre.trim() || !email.trim() || !password.trim()) {
-      setError('Completá todos los campos');
+
+    if (!nombre.trim() || !email.trim() || !password) {
+      setError('Completá todos los campos.');
       return;
     }
+
     setCargando(true);
     try {
-      await registrar({ nombre, email, password, rol: 'usuario' });
-      Alert.alert('Éxito', 'Usuario creado. Iniciá sesión.', [
-        { text: 'OK', onPress: () => router.replace('/login') },
+      await registrar({
+        nombre: nombre.trim(),
+        email: email.trim(),
+        password,
+        rol: 'usuario',
+      });
+      Alert.alert('Cuenta creada', 'Ya podés iniciar sesión.', [
+        {
+          text: 'Ir a iniciar sesión',
+          onPress: () => router.replace('/login'),
+        },
       ]);
-    } catch (e: unknown) {
-      const err = e as { name?: string; message?: string };
-      setError(err.name === 'ApiError' ? (err.message ?? 'Error inesperado') : 'Error inesperado');
+    } catch (fallo) {
+      setError('No pudimos crear tu cuenta. Probá de nuevo.');
     } finally {
       setCargando(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1, backgroundColor: '#fff', padding: 24, justifyContent: 'center' }}
-      keyboardVerticalOffset={90}
-    >
-      <View style={{ width: '100%', maxWidth: 400, alignSelf: 'center' }}>
-        <Text style={{ fontSize: 28, fontWeight: '700', color: '#111827', marginBottom: 24, textAlign: 'center' }}>Crear cuenta</Text>
+    <Pantalla>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          contentContainerStyle={{
+            flexGrow: 1,
+            justifyContent: 'center',
+            paddingHorizontal: spacing.xl,
+            paddingVertical: spacing.xxl,
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={{ width: '100%', maxWidth: 420, alignSelf: 'center' }}>
+            <Marca />
 
-        {error && (
-          <Text style={{ backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', color: '#dc2626', padding: 12, borderRadius: 8, marginBottom: 16, textAlign: 'center' }}>
-            {error}
-          </Text>
-        )}
+            <Text style={[textStyles.h1, { marginTop: spacing.xxl }]}>Creá tu cuenta</Text>
+            <Text
+              style={[
+                textStyles.body,
+                { color: colors.muted, marginTop: spacing.md, maxWidth: 310 },
+              ]}
+            >
+              Solo necesitás un nombre, un correo y una contraseña.
+            </Text>
 
-        <View style={{ marginBottom: 16 }}>
-          <Text style={{ fontSize: 14, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Nombre</Text>
-          <TextInput
-            style={{ height: 48, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, paddingHorizontal: 14, fontSize: 16, backgroundColor: '#fff', color: '#111827' }}
-            value={nombre}
-            onChangeText={setNombre}
-            autoCapitalize="words"
-            autoComplete="name"
-          />
-        </View>
+            <View style={{ marginTop: spacing.xxl }}>
+              {error ? <Aviso>{error}</Aviso> : null}
 
-        <View style={{ marginBottom: 16 }}>
-          <Text style={{ fontSize: 14, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Email</Text>
-          <TextInput
-            style={{ height: 48, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, paddingHorizontal: 14, fontSize: 16, backgroundColor: '#fff', color: '#111827' }}
-            value={email}
-            onChangeText={setEmail}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoComplete="email"
-          />
-        </View>
+              <CampoFormulario
+                label="Nombre"
+                valor={nombre}
+                enCambioValor={setNombre}
+                placeholder="Tu nombre"
+                autoCapitalize="words"
+                autoComplete="name"
+              />
 
-        <View style={{ marginBottom: 16 }}>
-          <Text style={{ fontSize: 14, fontWeight: '500', marginBottom: 6, color: '#374151' }}>Contraseña</Text>
-          <TextInput
-            style={{ height: 48, borderWidth: 1, borderColor: '#d1d5db', borderRadius: 8, paddingHorizontal: 14, fontSize: 16, backgroundColor: '#fff', color: '#111827' }}
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry
-            autoComplete="new-password"
-          />
-        </View>
+              <CampoFormulario
+                label="Correo electrónico"
+                valor={email}
+                enCambioValor={setEmail}
+                placeholder="tu@email.com"
+                tipoTeclado="email-address"
+                autoCapitalize="none"
+                autoComplete="email"
+                autoCorrect={false}
+              />
 
-        <TouchableOpacity style={{ backgroundColor: '#2563eb', paddingVertical: 14, borderRadius: 8, alignItems: 'center', justifyContent: 'center', marginTop: 8, opacity: cargando ? 0.6 : 1 }} onPress={handleRegistro} disabled={cargando}>
-          {cargando ? <ActivityIndicator color="#fff" size="small" /> : <Text style={{ color: '#fff', fontWeight: '600', fontSize: 16 }}>Registrarse</Text>}
-        </TouchableOpacity>
+              <CampoFormulario
+                label="Contraseña"
+                valor={password}
+                enCambioValor={setPassword}
+                placeholder="Elegí una contraseña"
+                secureTextEntry
+                autoComplete="new-password"
+                returnKeyType="go"
+                onSubmitEditing={handleRegistro}
+              />
 
-        <View style={{ flexDirection: 'row', justifyContent: 'center', marginTop: 24, gap: 4 }}>
-          <Text style={{ color: '#6b7280' }}>¿Ya tenés cuenta? </Text>
-          <TouchableOpacity onPress={() => router.replace('/login')}>
-            <Text style={{ color: '#2563eb', fontWeight: '600' }}>Iniciar sesión</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    </KeyboardAvoidingView>
+              <Boton onPress={handleRegistro} cargando={cargando}>
+                Crear cuenta
+              </Boton>
+
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexWrap: 'wrap',
+                  marginTop: spacing.xl,
+                }}
+              >
+                <Text style={textStyles.bodySmall}>¿Ya tenés cuenta?</Text>
+                <BotonTexto onPress={() => router.replace('/login')}>
+                  Iniciá sesión
+                </BotonTexto>
+              </View>
+            </View>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </Pantalla>
   );
 }

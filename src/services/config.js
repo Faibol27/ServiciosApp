@@ -22,7 +22,7 @@ export function obtenerUrlBaseApi() {
         if (host && host !== "localhost")
             return `http://${host}:${DEFAULT_PORT}`;
     }
-    return `http://localhost:${DEFAULT_PORT}`;
+    return `http://192.168.1.102:${DEFAULT_PORT}`;
 }
 export const API_URL = obtenerUrlBaseApi();
 export const TIMEOUT_MS = 10000;

@@ -1,144 +1,184 @@
 import { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, KeyboardAvoidingView, Platform, ActivityIndicator, Alert, FlatList } from 'react-native';
+import { ActivityIndicator, Alert, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { router } from 'expo-router';
-import { obtenerReservasCliente, cancelarReserva } from '@/services/reservas.service';
 import { getUser } from '@/services/auth.service';
+import { obtenerReservasCliente, cancelarReserva, completarReserva } from '@/services/reservas.service';
+import { colors, maxWidth, spacing } from '@/design/tokens';
+import { textStyles } from '@/design/textStyles';
+import { Pantalla } from '@/design/Pantalla';
+import { Boton, BotonPeligro, BotonSecundario, BotonTexto } from '@/design/Botones';
+import { BotonVolver } from '@/design/BotonVolver';
+import { Aviso } from '@/design/Aviso';
+import { EstadoVacio } from '@/design/EstadoVacio';
+import { TarjetaReserva } from '@/design/TarjetaReserva';
+import { mensajeDeError, ordenarReservas } from '@/utils/formato';
 
 export default function MisReservasScreen() {
   const [reservas, setReservas] = useState<any[]>([]);
   const [cargando, setCargando] = useState(true);
+  const [refrescando, setRefrescando] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [user, setUser] = useState<any>(null);
+  const [esAdmin, setEsAdmin] = useState(false);
+  const [usuario, setUsuario] = useState<any>(null);
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      const u = await getUser();
-      if (!u) {
-        router.replace('/login');
-        return;
-      }
-      setUser(u);
-      if (mounted) {
-        setCargando(true);
-        try {
-          const lista = await obtenerReservasCliente();
-          if (mounted) setReservas(lista);
-        } catch (e: unknown) {
-          if (mounted) {
-            const err = e as { name?: string; message?: string };
-            setError(err.name === 'ApiError' ? (err.message ?? 'Error al cargar reservas') : 'Error al cargar reservas');
-          }
-        } finally {
-          if (mounted) setCargando(false);
-        }
-      }
-    })();
-    return () => { mounted = false; };
-  }, []);
-
-  const refresh = async () => {
+  const cargarReservas = async () => {
+    setCargando(true);
     try {
       const lista = await obtenerReservasCliente();
       setReservas(lista);
-    } catch (e: unknown) {
-      const err = e as { name?: string; message?: string };
-      setError(err.name === 'ApiError' ? (err.message ?? 'Error al actualizar') : 'Error al actualizar');
+      setError(null);
+    } catch (fallo) {
+      setError(mensajeDeError(fallo, 'No pudimos cargar tus reservas.'));
+    } finally {
+      setCargando(false);
     }
   };
 
-  const handleCancelarReserva = async (id: number) => {
-    Alert.alert('Confirmar', '¿Cancelar esta reserva?', [
-      { text: 'No', style: 'cancel' },
+  useEffect(() => {
+    let montado = true;
+    (async () => {
+      const usuario = await getUser();
+      if (!usuario) {
+        router.replace('/login');
+        return;
+      }
+      if (!montado) return;
+      setEsAdmin(usuario.rol === 'admin');
+      await cargarReservas();
+    })();
+    return () => { montado = false; };
+  }, []);
+
+  const refrescar = async () => {
+    setRefrescando(true);
+    try {
+      await cargarReservas();
+    } finally {
+      setRefrescando(false);
+    }
+  };
+
+  const reintentar = async () => {
+    setCargando(true);
+    try {
+      await cargarReservas();
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  const handleCancelar = (id: number) => {
+    Alert.alert('Cancelar reserva', '¿Querés cancelar esta reserva?', [
+      { text: 'Volver', style: 'cancel' },
       {
-        text: 'Sí, cancelar', style: 'destructive',
+        text: 'Cancelar reserva',
+        style: 'destructive',
         onPress: async () => {
           try {
             await cancelarReserva(id);
-            setReservas((prev) => prev.map((r) => r.id === id ? { ...r, estado: 'cancelada' } : r));
-            Alert.alert('Éxito', 'Reserva cancelada');
-          } catch (e: unknown) {
-            const err = e as { name?: string; message?: string };
-            Alert.alert('Error', err.name === 'ApiError' ? (err.message ?? 'No se pudo cancelar') : 'Error al cancelar');
+            await cargarReservas();
+            Alert.alert('Reserva cancelada');
+          } catch (fallo) {
+            Alert.alert('No pudimos cancelar la reserva', mensajeDeError(fallo, 'Probá de nuevo en un momento.'));
           }
         },
       },
     ]);
   };
 
-  if (cargando && !user) {
+  const handleCompletar = (id: number) => {
+    Alert.alert('Completar reserva', '¿Marcar esta reserva como completada?', [
+      { text: 'Volver', style: 'cancel' },
+      {
+        text: 'Completar',
+        onPress: async () => {
+          try {
+            await completarReserva(id);
+            await cargarReservas();
+            Alert.alert('Reserva completada');
+          } catch (fallo) {
+            Alert.alert('No pudimos completar la reserva', mensajeDeError(fallo, 'Probá de nuevo en un momento.'));
+          }
+        },
+      },
+    ]);
+  };
+
+  if (cargando) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" />
-        <Text style={{ marginTop: 12 }}>Cargando...</Text>
-      </View>
+      <Pantalla>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.md }}>
+          <ActivityIndicator color={colors.brand} size="large" />
+          <Text style={textStyles.bodySmall}>Cargando…</Text>
+        </View>
+      </Pantalla>
     );
   }
 
-  const fechaStr = (fecha: string | undefined) => (fecha ? new Date(fecha).toLocaleDateString() : '-');
-
-  const colorEstado = (estado: string) => {
-    if (estado === 'pendiente') return '#2563eb';
-    if (estado === 'completada') return '#16a34a';
-    if (estado === 'cancelada') return '#dc2626';
-    return '#6b7280';
-  };
+  const reservasOrdenadas = ordenarReservas(reservas);
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={{ flex: 1, backgroundColor: '#fff' }}
-      keyboardVerticalOffset={90}
-    >
-      <View style={{ padding: 16 }}>
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <Text style={{ fontSize: 24, fontWeight: '700', color: '#111827' }}>Mis Reservas</Text>
-          <TouchableOpacity onPress={() => router.push('/' as any)} style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6, borderWidth: 1, borderColor: '#2563eb' }}>
-            <Text style={{ color: '#2563eb', fontWeight: '600', fontSize: 14 }}>Volver a Servicios</Text>
-          </TouchableOpacity>
+    <Pantalla>
+      <ScrollView
+        contentContainerStyle={{ paddingHorizontal: spacing.lg + 4, paddingTop: spacing.md, paddingBottom: spacing.xxxl }}
+        refreshControl={<RefreshControl refreshing={refrescando} onRefresh={refrescar} tintColor={colors.brand} colors={[colors.brand]} />}
+      >
+        <View style={{ width: '100%', maxWidth, alignSelf: 'center' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+            <BotonVolver onPress={() => (router.canGoBack() ? router.back() : router.replace('/'))} />
+            <Text style={textStyles.h1}>Mis reservas</Text>
+          </View>
+          {esAdmin ? (
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: spacing.sm }}>
+              <BotonSecundario tono="muted" compacto onPress={() => router.push('/reservas-admin')}>
+                Todas las reservas
+              </BotonSecundario>
+            </View>
+          ) : null}
+          <Text style={[textStyles.bodySmall, { marginTop: spacing.sm, marginLeft: 42 + spacing.md }]}>
+            Tus reservas y el estado de cada una.
+          </Text>
+          {!esAdmin && usuario && (
+            <Text style={{ color: '#dc2626', fontSize: 11, marginTop: 4 }}>
+              Rol detectado: {usuario.rol}
+            </Text>
+          )}
+
+          {error ? (
+            <View style={{ marginTop: spacing.xl }}>
+              <Aviso>{error}</Aviso>
+              <Boton compacto variante="secundario" onPress={reintentar} style={{ alignSelf: 'flex-start' }}>
+                Reintentar
+              </Boton>
+            </View>
+          ) : null}
+
+          <View style={{ marginTop: spacing.xl }}>
+            {reservasOrdenadas.length === 0 ? (
+              <EstadoVacio
+                titulo="Todavía no tenés reservas"
+                descripcion="Elegí un servicio y reservá tu primer turno."
+              />
+            ) : (
+              reservasOrdenadas.map((reserva) => (
+                <TarjetaReserva
+                  key={String(reserva.id)}
+                  reserva={reserva}
+                  acciones={
+                    reserva.estado === 'pendiente' ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs }}>
+                        <BotonPeligro tono="peligro" onPress={() => handleCancelar(reserva.id)}>
+                          Cancelar
+                        </BotonPeligro>
+                      </View>
+                    ) : null
+                  }
+                />
+              ))
+            )}
+          </View>
         </View>
-
-        {error && (
-          <View style={{ backgroundColor: '#fef2f2', borderWidth: 1, borderColor: '#fecaca', padding: 12, borderRadius: 8, marginBottom: 16, alignItems: 'center' }}>
-            <Text style={{ color: '#dc2626' }}>{error}</Text>
-          </View>
-        )}
-
-        {reservas.length === 0 ? (
-          <View style={{ padding: 32, alignItems: 'center' }}>
-            <Text style={{ fontSize: 16, color: '#6b7280', marginBottom: 4 }}>No tenés reservas todavía</Text>
-          </View>
-        ) : (
-          <FlatList
-            data={reservas}
-            keyExtractor={(item) => String(item.id)}
-            renderItem={({ item }) => {
-              const colorEstado = colorEstadoFunc(item.estado);
-              return (
-                <View style={{ backgroundColor: '#fafafa', borderWidth: 1, borderColor: '#eee', borderRadius: 8, padding: 12, marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <View>
-                    <Text style={{ fontSize: 15, fontWeight: '600', color: '#111827' }}>{item.servicio?.nombre ?? 'Servicio'}</Text>
-                    <Text style={{ fontSize: 13, color: '#6b7280' }}>{fechaStr(item.fecha)} - {item.hora}</Text>
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: colorEstado, marginTop: 4 }}>{item.estado}</Text>
-                  </View>
-                  {item.estado === 'pendiente' && (
-                    <TouchableOpacity onPress={() => handleCancelarReserva(item.id)} style={{ paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: '#fee2e2' }}>
-                      <Text style={{ color: '#dc2626', fontWeight: '600', fontSize: 12 }}>Cancelar</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              );
-            }}
-          />
-        )}
-      </View>
-    </KeyboardAvoidingView>
+      </ScrollView>
+    </Pantalla>
   );
 }
-
-const colorEstadoFunc = (estado: string) => {
-  if (estado === 'pendiente') return '#2563eb';
-  if (estado === 'completada') return '#16a34a';
-  if (estado === 'cancelada') return '#dc2626';
-  return '#6b7280';
-};
